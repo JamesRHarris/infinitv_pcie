@@ -6,6 +6,12 @@
 
 #include <linux/dma-mapping.h>
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6,5,0)
+#include <linux/socket.h>
+#include <linux/net.h>
+#include <net/sock.h>
+#endif
+
 #define MPEG_VERIFY 0
 
 #if CHECK_NOTIFY_CC
@@ -875,6 +881,26 @@ out:
     return new_read_index;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6,5,0)
+static int send_data(struct file *file, struct page *page, size_t offset, size_t size)
+{
+    struct socket *sock;
+    struct msghdr msg = {};
+    struct kvec iov;
+    int ret;
+
+    sock = sock_from_file(file);
+    if (!sock)
+        return -ENOTSOCK;
+    
+    iov.iov_base = page_address(page) + offset;
+    iov.iov_len = size;
+
+    ret = kernel_sendmsg(sock, &msg, &iov, 1, size);
+    return ret;
+}
+#endif
+
 int ctn91xx_mpeg_send(ctn91xx_dev_t* dev, int minor, unsigned long arg)
 {
     int ret = 0;
@@ -908,6 +934,7 @@ int ctn91xx_mpeg_send(ctn91xx_dev_t* dev, int minor, unsigned long arg)
         goto out;
     }
 
+#if  LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
     if( !out_file->f_op || !out_file->f_op->sendpage ) {
         goto fput_out;
     }
@@ -917,6 +944,17 @@ int ctn91xx_mpeg_send(ctn91xx_dev_t* dev, int minor, unsigned long arg)
                   vbuffer->header_buffer_page,
                   0, send.header_length,
                   &out_file->f_pos, 1 /* more */ );
+#else
+    if( !out_file->f_op  ) {
+        goto fput_out;
+    }
+
+    written = send_data(out_file, vbuffer->header_buffer_page, 0, send.header_length);
+    if (written < 0) {
+        ret = written;
+        goto fput_out;
+    }
+#endif
 
     lock = &vbuffer->lock;
     {
@@ -927,25 +965,32 @@ int ctn91xx_mpeg_send(ctn91xx_dev_t* dev, int minor, unsigned long arg)
 
             if( !mpeg_data_ready( vbuffer ) || !dev->mpeg_user_cnt[vbuffer->tuner_index]) {
                 spin_unlock_w_flags( lock );
+#if  LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
                 out_file->f_op->sendpage(
                     out_file,
                     NULL,
                     0,
                     0,
                     &out_file->f_pos, 0 /* no-more */ );
+#else
+                send_data(out_file, NULL, 0, 0);
+#endif
                 goto fput_out;
             }
 
             if( vbuffer->remaining[vbuffer->read_idx] >= count ) {
 
                 spin_unlock_w_flags( lock );
+#if  LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
                 written = out_file->f_op->sendpage(
                               out_file,
                               vbuffer->pages[vbuffer->read_idx],
                               offset,
                               count,
                               &out_file->f_pos, 0 /* no-more */ );
-
+#else
+                written = send_data(out_file, vbuffer->pages[vbuffer->read_idx], offset, count);
+#endif
                 if( written < 0 ) {
                     ERROR("sendpage, written %zd", written);
                     goto fput_out;
@@ -957,14 +1002,17 @@ int ctn91xx_mpeg_send(ctn91xx_dev_t* dev, int minor, unsigned long arg)
                 done = 1;
 
             } else if( vbuffer->remaining[vbuffer->read_idx] > 0 ) { //remaining < count
-
                 spin_unlock_w_flags( lock );
+#if  LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
                 written = out_file->f_op->sendpage(
                               out_file,
                               vbuffer->pages[vbuffer->read_idx],
                               offset,
                               vbuffer->remaining[vbuffer->read_idx],
                               &out_file->f_pos, 1 /* more */ );
+#else
+                written = send_data(out_file, vbuffer->pages[vbuffer->read_idx], offset, vbuffer->remaining[vbuffer->read_idx]);
+#endif
 
                 if( written < 0 ) {
                     ERROR("sendpage, written %zd", written);

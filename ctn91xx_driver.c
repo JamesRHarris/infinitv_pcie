@@ -128,8 +128,10 @@ static int ctn91xx_mmap(struct file* filp, struct vm_area_struct* vma)
             pfn = (unsigned long)dev->hw_reg_base >> PAGE_SHIFT;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
             vma->vm_flags |= VM_IO | VM_RESERVED;
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
             vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
+#else
+	    vm_flags_set(vma, (VM_IO | VM_DONTEXPAND | VM_DONTDUMP));
 #endif
 
             if(io_remap_pfn_range(vma, vma->vm_start,
@@ -150,8 +152,10 @@ static int ctn91xx_mmap(struct file* filp, struct vm_area_struct* vma)
             pfn = (unsigned long)dev->translation_hw_reg_base >> PAGE_SHIFT;
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0)
             vma->vm_flags |= VM_IO | VM_RESERVED;
-#else
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
             vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
+#else
+	    vm_flags_set(vma, (VM_IO | VM_DONTEXPAND | VM_DONTDUMP));
 #endif
 
             if(io_remap_pfn_range(vma, vma->vm_start,
@@ -221,8 +225,11 @@ static int __init ctn91xx_init(void)
         return ret;
     }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,5,0)
     ctn91xx_class = class_create( THIS_MODULE, DEVICE_NAME );
-
+#else
+    ctn91xx_class = class_create( DEVICE_NAME );
+#endif
     if( IS_ERR( ctn91xx_class ) ) {
         ERROR("failed to create class");
         unregister_chrdev_region( MKDEV( CETON_MAJOR, 0 ), 255 );
